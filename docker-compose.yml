@@ -1,0 +1,78 @@
+# DEPLOY-REQ-001: All services on shared bridge network
+# DEPLOY-REQ-004: api depends_on postgres with condition: service_healthy
+# DEPLOY-REQ-005: restart: unless-stopped on all services
+
+services:
+
+  postgres:
+    image: postgres:16.3-alpine
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # DEPLOY-REQ-015
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    networks:
+      - delivery_network
+    healthcheck:  # DEPLOY-REQ-035
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - delivery_network
+    # DEPLOY-REQ-002: No ports exposed on host
+    healthcheck:  # DEPLOY-REQ-036
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:  # DEPLOY-REQ-038
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_HTTP_PORT:-80}:80"  # DEPLOY-REQ-003
+    depends_on:
+      - api
+    networks:
+      - delivery_network
+    healthcheck:  # DEPLOY-REQ-037
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:  # DEPLOY-REQ-038
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+networks:
+  delivery_network:
+    driver: bridge
+
+volumes:
+  postgres_data:  # DEPLOY-REQ-016
+    driver: local
