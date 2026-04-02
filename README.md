@@ -4,7 +4,7 @@ A self-hosted web dashboard for tracking deliveries. Consolidates all your deliv
 
 ![Delivery List](docs/screenshots/delivery-list.png)
 
-> **Note:** The current MVP uses the [Parcel App](https://parcelapp.net) API as its data source. Future versions will add direct API connections to all major delivery providers (UPS, USPS, FedEx, DHL, Royal Mail, etc.).
+> **Note:** The current MVP uses the [Parcel App](https://parcelapp.net) API as its data source. Future versions will add direct API connections to all major delivery providers (UPS, USPS, FedEx, DHL, etc.).
 
 ## What it does
 
