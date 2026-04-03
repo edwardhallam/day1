@@ -128,3 +128,15 @@ Follow the inward-to-outward sequence. Each phase should be a separate Claude Co
 - ADR-004: React 18 + TypeScript + Vite frontend
 - ADR-005: Nginx reverse proxy
 - ADR-006: Docker Compose v2 orchestration
+
+## Production Deployment
+
+| Property | Value |
+|----------|-------|
+| Host | `oci-edwardhallam-com` (Oracle Cloud ARM, San Jose) |
+| Stack Path | `/opt/stacks/delivery-tracking/` |
+| SSH | `ssh oci-edwardhallam-com-admin` |
+| Deploy | `ssh oci-edwardhallam-com-admin "cd /opt/stacks/delivery-tracking && docker compose build && docker compose up -d --force-recreate"` |
+| CF Tunnel | `oci-edwardhallam-com` (route: deliveries.edwardhallam.com) |
+| Logs | `ssh oci-edwardhallam-com-admin "docker logs delivery-tracking-api-1"` |
+| Frontend Port | 8080 (host) → 80 (container) |
