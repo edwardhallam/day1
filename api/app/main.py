@@ -30,7 +30,8 @@ from __future__ import annotations
 import logging
 import logging.config
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator
+from datetime import datetime
+from typing import Any, AsyncGenerator, Optional
 
 import httpx
 from apscheduler.triggers.interval import IntervalTrigger
@@ -39,6 +40,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.application.dtos.system_dtos import CarrierListDTO
+from app.application.services.interfaces import (
+    AbstractCarrierCache,
+    AbstractSchedulerState,
+)
 from app.config import settings
 from app.infrastructure.database.engine import engine
 from app.infrastructure.parcel_api.carrier_cache import CarrierCache
@@ -66,6 +72,31 @@ def _configure_logging() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Demo mode stubs
+# ---------------------------------------------------------------------------
+
+
+class _DemoSchedulerStub(AbstractSchedulerState):
+    """No-op scheduler stub for demo mode — health endpoint reports not running."""
+
+    def is_running(self) -> bool:
+        return False
+
+    def get_next_poll_at(self) -> Optional[datetime]:
+        return None
+
+
+class _DemoCarrierCacheStub(AbstractCarrierCache):
+    """No-op carrier cache stub for demo mode."""
+
+    def get_carriers(self) -> CarrierListDTO:
+        return CarrierListDTO(carriers=[], cached_at=None, cache_status="unavailable")
+
+    async def refresh(self) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
@@ -80,80 +111,92 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     _configure_logging()
     logger.info(
-        "Starting Delivery Tracking Service v%s (env=%s)",
+        "Starting Delivery Tracking Service v%s (env=%s, demo=%s)",
         settings.VERSION,
         settings.ENVIRONMENT,
+        settings.DEMO_MODE,
     )
 
-    # ── Step 1: Shared HTTP client ────────────────────────────────────────
-    # One client instance reused across all poll cycles for connection reuse
-    # (POLL-REQ-012).  TLS verification always enabled (SEC-REQ-055).
-    http_client = httpx.AsyncClient(verify=True)
+    if settings.DEMO_MODE:
+        # ── Demo mode: no Parcel API, no scheduler, no carrier cache ─────
+        app.state.polling_scheduler = _DemoSchedulerStub()
+        app.state.carrier_cache = _DemoCarrierCacheStub()
+        logger.info("Demo mode: polling and carrier cache disabled")
+        logger.info("Application startup complete — accepting requests")
 
-    # ── Step 2: Parcel API client ─────────────────────────────────────────
-    parcel_client = ParcelAPIClient(
-        client=http_client,
-        api_key=settings.PARCEL_API_KEY.get_secret_value(),
-        timeout=float(settings.POLL_HTTP_TIMEOUT_SECONDS),
-    )
+        yield
 
-    # ── Step 3: Carrier cache — initial refresh fires as background task ──
-    carrier_cache = CarrierCache(parcel_client=parcel_client)
-    import asyncio  # noqa: PLC0415
+        logger.info("Application shutdown complete")
+    else:
+        # ── Normal mode: full startup sequence ───────────────────────────
 
-    asyncio.create_task(
-        carrier_cache.refresh(),
-        name="carrier_cache_initial_refresh",
-    )
+        # Step 1: Shared HTTP client — connection reuse (POLL-REQ-012).
+        # TLS verification always enabled (SEC-REQ-055).
+        http_client = httpx.AsyncClient(verify=True)
 
-    # ── Step 4: Polling scheduler ─────────────────────────────────────────
-    polling_scheduler = PollingScheduler(
-        parcel_client=parcel_client,
-        interval_minutes=settings.POLL_INTERVAL_MINUTES,
-        jitter_seconds=settings.POLL_JITTER_SECONDS,
-    )
+        # Step 2: Parcel API client
+        parcel_client = ParcelAPIClient(
+            client=http_client,
+            api_key=settings.PARCEL_API_KEY.get_secret_value(),
+            timeout=float(settings.POLL_HTTP_TIMEOUT_SECONDS),
+        )
 
-    # Register carrier-refresh job on the internal APScheduler instance
-    # BEFORE calling start() so it is activated alongside the poll job.
-    polling_scheduler._scheduler.add_job(  # noqa: SLF001
-        func=carrier_cache.refresh,
-        trigger=IntervalTrigger(hours=24),
-        id="carrier_refresh",
-        name="Carrier Cache Refresh",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=3600,
-        replace_existing=True,
-    )
+        # Step 3: Carrier cache — initial refresh fires as background task
+        carrier_cache = CarrierCache(parcel_client=parcel_client)
+        import asyncio  # noqa: PLC0415
 
-    # ── Step 5: Start scheduler (also fires cold-start poll — POLL-REQ-003) ──
-    polling_scheduler.start()
+        asyncio.create_task(
+            carrier_cache.refresh(),
+            name="carrier_cache_initial_refresh",
+        )
 
-    # ── Step 6: Store on app.state for DI access ─────────────────────────
-    app.state.http_client = http_client
-    app.state.parcel_client = parcel_client
-    app.state.carrier_cache = carrier_cache
-    app.state.polling_scheduler = polling_scheduler
+        # Step 4: Polling scheduler
+        polling_scheduler = PollingScheduler(
+            parcel_client=parcel_client,
+            interval_minutes=settings.POLL_INTERVAL_MINUTES,
+            jitter_seconds=settings.POLL_JITTER_SECONDS,
+        )
 
-    logger.info("Application startup complete — accepting requests")
+        # Register carrier-refresh job on the internal APScheduler instance
+        # BEFORE calling start() so it is activated alongside the poll job.
+        polling_scheduler._scheduler.add_job(  # noqa: SLF001
+            func=carrier_cache.refresh,
+            trigger=IntervalTrigger(hours=24),
+            id="carrier_refresh",
+            name="Carrier Cache Refresh",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+            replace_existing=True,
+        )
 
-    # ── Yield: application is running ────────────────────────────────────
-    yield
+        # Step 5: Start scheduler (also fires cold-start poll — POLL-REQ-003)
+        polling_scheduler.start()
 
-    # ── Shutdown ─────────────────────────────────────────────────────────
-    logger.info("Application shutdown initiated")
+        # Step 6: Store on app.state for DI access
+        app.state.http_client = http_client
+        app.state.parcel_client = parcel_client
+        app.state.carrier_cache = carrier_cache
+        app.state.polling_scheduler = polling_scheduler
 
-    # Step 1: Stop scheduler — wait=True lets an in-progress poll complete
-    # (POLL-REQ-002; APScheduler default grace period applies)
-    polling_scheduler.shutdown()
+        logger.info("Application startup complete — accepting requests")
 
-    # Step 2: Close shared HTTP client (drains keep-alive connections)
-    await http_client.aclose()
+        yield
 
-    # Step 3: Dispose SQLAlchemy engine connection pool
-    await engine.dispose()
+        # ── Shutdown ─────────────────────────────────────────────────────
+        logger.info("Application shutdown initiated")
 
-    logger.info("Application shutdown complete")
+        # Stop scheduler — wait=True lets an in-progress poll complete
+        # (POLL-REQ-002; APScheduler default grace period applies)
+        polling_scheduler.shutdown()
+
+        # Close shared HTTP client (drains keep-alive connections)
+        await http_client.aclose()
+
+        # Dispose SQLAlchemy engine connection pool
+        await engine.dispose()
+
+        logger.info("Application shutdown complete")
 
 
 # ---------------------------------------------------------------------------
