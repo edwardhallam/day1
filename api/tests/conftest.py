@@ -21,6 +21,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ENVIRONMENT", "development")
 os.environ.setdefault("BCRYPT_ROUNDS", "10")  # minimum valid; keeps tests fast-ish
+os.environ.setdefault("DEMO_MODE", "false")
 
 import pytest
 

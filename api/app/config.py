@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Literal, Optional
 
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     """Async PostgreSQL URL:  postgresql+psycopg://user:pass@host:5432/db"""
 
     # ── Parcel API ───────────────────────────────────────────
-    PARCEL_API_KEY: SecretStr
-    """API key for api.parcel.app — never logged (POLL-REQ-007/009, SEC-REQ-047)."""
+    PARCEL_API_KEY: Optional[SecretStr] = None
+    """API key for api.parcel.app — required unless DEMO_MODE=true."""
 
     # ── Authentication ───────────────────────────────────────
     JWT_SECRET_KEY: SecretStr
@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     HTTPS_ENABLED: bool = False
     FRONTEND_HTTP_PORT: int = 80
 
+    DEMO_MODE: bool = False
+    """When True: seed demo user + fixtures, skip polling, PARCEL_API_KEY not required."""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -78,13 +81,6 @@ class Settings(BaseSettings):
     )
 
     # ── Validators ───────────────────────────────────────────
-
-    @field_validator("PARCEL_API_KEY")
-    @classmethod
-    def parcel_api_key_non_empty(cls, v: SecretStr) -> SecretStr:
-        if not v.get_secret_value().strip():
-            raise ValueError("PARCEL_API_KEY must be a non-empty string")
-        return v
 
     @field_validator("JWT_SECRET_KEY")
     @classmethod
@@ -157,6 +153,16 @@ class Settings(BaseSettings):
     def normalise_environment(cls, v: str) -> str:
         """Normalise to lowercase so ENVIRONMENT=PRODUCTION works too."""
         return str(v).lower()
+
+    @model_validator(mode="after")
+    def require_parcel_api_key_when_not_demo(self) -> "Settings":
+        """PARCEL_API_KEY is required unless DEMO_MODE=true."""
+        if not self.DEMO_MODE:
+            if self.PARCEL_API_KEY is None or not self.PARCEL_API_KEY.get_secret_value().strip():
+                raise ValueError(
+                    "PARCEL_API_KEY is required when DEMO_MODE is not enabled"
+                )
+        return self
 
     # ── Computed properties ───────────────────────────────────
 
