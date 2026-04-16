@@ -4,7 +4,7 @@
 # DEPLOY-REQ-009: No .env or secrets in image
 
 # --- Stage 1: Builder ---
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim@sha256:bc389f7dfcb21413e72a28f491985326994795e34d2b86c8ae2f417b4e7818aa AS builder
 
 WORKDIR /build
 
@@ -13,7 +13,7 @@ RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 # --- Stage 2: Runtime ---
-FROM python:3.12-slim
+FROM python:3.14-slim@sha256:bc389f7dfcb21413e72a28f491985326994795e34d2b86c8ae2f417b4e7818aa
 
 WORKDIR /app
 
