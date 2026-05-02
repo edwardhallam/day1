@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Day1 delivery-tracking compose deploy hourly
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+RandomizedDelaySec=20min
+Persistent=true
+Unit=day1-compose-deploy.service
+
+[Install]
+WantedBy=timers.target

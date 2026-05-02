@@ -118,6 +118,10 @@ Open **http://localhost** (or the port set in `FRONTEND_HTTP_PORT`) and log in.
 
 In demo mode, fixture data is available immediately. In live mode, the first poll cycle runs on startup and your deliveries should appear within a few seconds.
 
+### Production deploy
+
+The live `day1.edwardhallam.com` stack runs from `/opt/stacks/delivery-tracking` on `oci-edwardhallam-com`. The host runs `day1-compose-deploy.timer` hourly; the timer fetches `main`, pulls registry images, rebuilds local app images only when the checkout changes, applies the stack, and pings Uptime Kuma after a successful run.
+
 ### 4. Post-setup (live mode only)
 
 Remove `ADMIN_PASSWORD` from `.env` after the first successful start to prevent credential exposure on subsequent restarts.
